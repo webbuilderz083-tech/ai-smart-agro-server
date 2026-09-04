@@ -289,5 +289,30 @@ GENERIC_FALLBACK = {
 
 
 def get_disease_info(raw_label):
-    """Look up friendly info for a raw model class label, with safe fallback."""
-    return DISEASE_INFO.get(raw_label, {**GENERIC_FALLBACK, "disease": raw_label})
+    """Look up friendly info for a raw model class label, with safe fallback.
+
+    Different plant-disease models on Hugging Face use different label
+    formats. This first tries an exact match against the PlantVillage-style
+    keys above; if that fails, it tries to parse common alternate formats
+    like "Tomato with Early Blight" or "Tomato - Early Blight" so the crop
+    and disease names still display correctly even without a full lookup
+    entry, before falling back to a fully generic response.
+    """
+    if raw_label in DISEASE_INFO:
+        return DISEASE_INFO[raw_label]
+
+    import re
+    match = re.split(r'\s+with\s+|\s*-\s*|___', raw_label, maxsplit=1, flags=re.IGNORECASE)
+    if len(match) == 2:
+        crop, disease = match[0].strip(), match[1].strip().replace('_', ' ')
+        is_healthy = disease.lower() in ('healthy', 'health')
+        return {
+            "crop": crop,
+            "disease": "Healthy" if is_healthy else disease,
+            "description": "No significant disease symptoms detected." if is_healthy else f"The AI model detected signs consistent with {disease.lower()} on this {crop.lower()} leaf.",
+            "symptoms": "Leaf appears structurally normal." if is_healthy else "Symptoms vary — consult a local agricultural officer to confirm visually.",
+            "treatment": "No treatment required. Continue regular monitoring." if is_healthy else "Consult a local agricultural officer or extension service to confirm this diagnosis before applying any treatment.",
+            "prevention": "Maintain balanced fertilization and routine monitoring." if is_healthy else "General good practice: crop rotation, proper spacing, balanced fertilization, and routine field monitoring.",
+        }
+
+    return {**GENERIC_FALLBACK, "disease": raw_label}
