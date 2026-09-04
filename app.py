@@ -50,7 +50,7 @@ HF_API_TOKEN = os.environ.get("HF_API_TOKEN", "")  # Get a free token at hugging
 # image-classification via the free Inference API. Verify the model still
 # exists/works before going live — swap this if the model repo changes.
 HF_MODEL_ID = os.environ.get("HF_MODEL_ID", "linkanjarad/mobilenet_v2_1.0_224-plant-disease-identification")
-HF_INFERENCE_URL = f"https://api-inference.huggingface.co/models/{HF_MODEL_ID}"
+HF_INFERENCE_URL = f"https://router.huggingface.co/hf-inference/models/{HF_MODEL_ID}"
 
 BASE_DIR = os.path.dirname(__file__)
 CROP_MODEL_PATH = os.path.join(BASE_DIR, "crop_model.joblib")
