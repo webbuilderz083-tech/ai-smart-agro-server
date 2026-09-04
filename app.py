@@ -86,6 +86,7 @@ def predict_disease():
 
     image_file = request.files["image"]
     image_bytes = image_file.read()
+    content_type = image_file.content_type or "image/jpeg"
 
     if not HF_API_TOKEN:
         return jsonify({"error": "Server misconfigured: HF_API_TOKEN not set."}), 500
@@ -93,7 +94,7 @@ def predict_disease():
     try:
         hf_response = requests.post(
             HF_INFERENCE_URL,
-            headers={"Authorization": f"Bearer {HF_API_TOKEN}"},
+            headers={"Authorization": f"Bearer {HF_API_TOKEN}", "Content-Type": content_type},
             data=image_bytes,
             timeout=50,
         )
@@ -108,7 +109,7 @@ def predict_disease():
             time.sleep(min(float(wait_hint), 20))
             hf_response = requests.post(
                 HF_INFERENCE_URL,
-                headers={"Authorization": f"Bearer {HF_API_TOKEN}"},
+                headers={"Authorization": f"Bearer {HF_API_TOKEN}", "Content-Type": content_type},
                 data=image_bytes,
                 timeout=50,
             )
