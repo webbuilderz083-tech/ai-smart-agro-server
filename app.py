@@ -35,6 +35,7 @@ See README.md in this folder for full deployment steps.
 """
 import os
 import json
+import time
 import joblib
 import requests
 from flask import Flask, request, jsonify
@@ -94,8 +95,23 @@ def predict_disease():
             HF_INFERENCE_URL,
             headers={"Authorization": f"Bearer {HF_API_TOKEN}"},
             data=image_bytes,
-            timeout=30,
+            timeout=50,
         )
+        # If the model is "cold" (not loaded yet), Hugging Face returns 503
+        # with an estimated_time. Wait briefly and retry once automatically
+        # instead of immediately giving up and falling back to demo mode.
+        if hf_response.status_code == 503:
+            try:
+                wait_hint = hf_response.json().get("estimated_time", 8)
+            except Exception:
+                wait_hint = 8
+            time.sleep(min(float(wait_hint), 20))
+            hf_response = requests.post(
+                HF_INFERENCE_URL,
+                headers={"Authorization": f"Bearer {HF_API_TOKEN}"},
+                data=image_bytes,
+                timeout=50,
+            )
     except requests.RequestException as e:
         return jsonify({"error": f"Could not reach AI model service: {e}"}), 502
 
