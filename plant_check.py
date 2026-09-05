@@ -2,23 +2,28 @@
 plant_check.py
 =====================================================
 A lightweight, free, local heuristic that checks whether an uploaded
-image plausibly shows a plant/leaf BEFORE sending it to the (rate-limited)
-Hugging Face model. This is not itself an AI model — it's a simple color
-analysis using Pillow — but it is a real, working, and honest check that
-catches obviously wrong uploads (faces, random objects, screenshots),
-so the site can show "This doesn't look like a plant photo" instead of
-a confusing, confidently-wrong disease prediction.
+image plausibly shows GREEN plant material before sending it to the
+(rate-limited) Hugging Face model.
 
-This is intentionally lenient: real diseased leaves are often brown/yellow
-rather than green, so the threshold accepts green, yellow-green, and
-brown/dried-leaf tones, not just pure green.
+HONEST LIMITATION (please read, and mention in your project report):
+This is a simple color heuristic, not an AI model, and out-of-distribution
+detection is a genuinely hard, unsolved problem in machine learning even
+for real research systems. An earlier version of this check also tried to
+accept brown/yellow "dried leaf" tones, but that made it too easy to
+mistake beige/tan fabric, wood, or skin tones for a diseased leaf — those
+color ranges genuinely overlap. This version deliberately only accepts
+green-dominant images, which is much more reliable at rejecting clearly
+wrong uploads (faces, screenshots, random objects), at the cost of also
+rejecting some heavily-diseased leaf photos where very little green
+remains. That trade-off is intentional: it's better to occasionally ask
+a farmer to retake a very brown leaf photo than to confidently return a
+fake diagnosis for a non-plant photo.
 """
 from PIL import Image
 import io
 
-# Minimum fraction of "plant-like" pixels required to pass the check.
-# Tuned to be lenient — real disease photos can be mostly brown/yellow.
-PLANT_PIXEL_THRESHOLD = 0.12
+# Minimum fraction of green-dominant pixels required to pass the check.
+PLANT_PIXEL_THRESHOLD = 0.10
 
 
 def is_probably_plant_image(image_bytes):
@@ -28,34 +33,20 @@ def is_probably_plant_image(image_bytes):
     try:
         img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     except Exception:
-        # If we can't even open it as an image, let the caller handle that separately.
         return True, 1.0  # don't block on our own parsing failure
 
-    # Downsample for speed — we only need a rough color distribution.
     img = img.resize((80, 80))
     pixels = list(img.getdata())
 
-    plant_like_count = 0
+    green_count = 0
     for r, g, b in pixels:
         # Skip near-white/near-gray/near-black pixels (walls, paper,
-        # overexposed backgrounds) — real leaf colors have some saturation.
-        if max(r, g, b) - min(r, g, b) < 20:
+        # overexposed backgrounds, shadows) — real leaf colors have some
+        # saturation and a clear green tilt.
+        if max(r, g, b) - min(r, g, b) < 15:
             continue
+        if g > r + 8 and g > b + 8 and g > 35:
+            green_count += 1
 
-        # Green-dominant (healthy leaf greens, various shades)
-        is_green = g > r and g > b and g > 40
-        # Yellow/brown-ish (dried, diseased, or autumn leaf tones).
-        # Real leaf browns/yellows have red and green channels close to
-        # each other (true yellow-brown hue). Human skin tones have a much
-        # bigger gap between red and green (more orange/pink), so a tight
-        # gap threshold here helps tell them apart.
-        is_yellow_brown = (
-            r > 60 and g > 40 and
-            r >= b and g >= b and
-            abs(int(r) - int(g)) < 35
-        )
-        if is_green or is_yellow_brown:
-            plant_like_count += 1
-
-    ratio = plant_like_count / len(pixels)
+    ratio = green_count / len(pixels)
     return ratio >= PLANT_PIXEL_THRESHOLD, round(ratio, 3)
