@@ -40,6 +40,7 @@ import joblib
 import requests
 from flask import Flask, request, jsonify
 from disease_info import get_disease_info
+from plant_check import is_probably_plant_image
 
 app = Flask(__name__)
 
@@ -87,6 +88,17 @@ def predict_disease():
     image_file = request.files["image"]
     image_bytes = image_file.read()
     content_type = image_file.content_type or "image/jpeg"
+
+    # Quick, free, local sanity check — reject images that don't look like
+    # plant material at all (faces, random photos, screenshots) before
+    # spending an AI API call on them.
+    looks_like_plant, plant_ratio = is_probably_plant_image(image_bytes)
+    if not looks_like_plant:
+        return jsonify({
+            "error": "not_a_plant",
+            "message": "This doesn't look like a plant leaf photo. Please upload a clear photo of a crop leaf for disease detection.",
+            "plant_pixel_ratio": plant_ratio,
+        }), 422
 
     if not HF_API_TOKEN:
         return jsonify({"error": "Server misconfigured: HF_API_TOKEN not set."}), 500
