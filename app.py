@@ -8,7 +8,7 @@ includes/config.php (AI_DISEASE_API_URL / AI_CROP_API_URL). It runs
 separately from the InfinityFree PHP site because InfinityFree cannot
 run Python/TensorFlow.
 
-Two REAL (non-demo) endpoints:
+Endpoints:
 
 1. POST /api/predict-disease
    - Accepts a multipart/form-data image upload (field name "image")
@@ -24,6 +24,15 @@ Two REAL (non-demo) endpoints:
    - Runs them through a REAL trained scikit-learn RandomForestClassifier
      (see train_crop_model.py) and returns the top 3 predicted crops
      with genuine model-derived probabilities.
+
+3. POST /api/translate
+   - Accepts JSON: {text, target_lang} where target_lang is "hi" or "mr".
+   - Uses free, task-specific Helsinki-NLP translation models via
+     Hugging Face's Inference API (NOT a generative chatbot model, so
+     it uses the same reliable free-tier pattern as disease detection).
+   - IMPORTANT: verify the exact model IDs below still work on your
+     account before relying on this in front of users — Marathi model
+     availability in particular has not been confirmed working.
 
 Security:
 - Requires the same X-API-KEY header value configured in the PHP site's
@@ -52,6 +61,19 @@ HF_API_TOKEN = os.environ.get("HF_API_TOKEN", "")  # Get a free token at hugging
 # exists/works before going live — swap this if the model repo changes.
 HF_MODEL_ID = os.environ.get("HF_MODEL_ID", "linkanjarad/mobilenet_v2_1.0_224-plant-disease-identification")
 HF_INFERENCE_URL = f"https://router.huggingface.co/hf-inference/models/{HF_MODEL_ID}"
+
+# ---------------- TRANSLATION MODELS ----------------
+# Task-specific translation models (Helsinki-NLP/opus-mt), not generative
+# chatbots, so they use the same reliable free Hugging Face Inference API
+# pattern as the disease-detection model above.
+# English <-> Hindi are well-established, commonly available models.
+# English <-> Marathi availability is NOT yet confirmed — this is tried,
+# and the endpoint clearly reports is_demo=true if it fails, so the site
+# never silently shows a broken or fake translation.
+TRANSLATE_MODEL_IDS = {
+    "hi": os.environ.get("HF_TRANSLATE_MODEL_EN_HI", "Helsinki-NLP/opus-mt-en-hi"),
+    "mr": os.environ.get("HF_TRANSLATE_MODEL_EN_MR", "Helsinki-NLP/opus-mt-en-mr"),
+}
 
 BASE_DIR = os.path.dirname(__file__)
 CROP_MODEL_PATH = os.path.join(BASE_DIR, "crop_model.joblib")
@@ -203,6 +225,74 @@ def recommend_crop():
         })
 
     return jsonify({"recommendations": recommendations})
+
+
+@app.route("/api/translate", methods=["POST"])
+def translate_text():
+    """
+    Translate English text into Hindi or Marathi using a free, task-specific
+    Helsinki-NLP model via Hugging Face's Inference API.
+
+    Request JSON: {"text": "...", "target_lang": "hi" | "mr"}
+    Response: {"translation": "...", "is_demo": false}
+      - is_demo=true means the AI model was unreachable/unavailable, and
+        "translation" is simply the original text unchanged (never a fake
+        or guessed translation).
+    """
+    if not check_auth():
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.get_json(silent=True) or request.form
+    text = (data.get("text") or "").strip()
+    target_lang = (data.get("target_lang") or "").strip()
+
+    if not text:
+        return jsonify({"error": "No text provided."}), 400
+    if target_lang not in TRANSLATE_MODEL_IDS:
+        return jsonify({"error": "target_lang must be 'hi' or 'mr'."}), 400
+
+    if not HF_API_TOKEN:
+        return jsonify({"translation": text, "is_demo": True, "reason": "HF_API_TOKEN not set"})
+
+    model_id = TRANSLATE_MODEL_IDS[target_lang]
+    url = f"https://router.huggingface.co/hf-inference/models/{model_id}"
+
+    try:
+        hf_response = requests.post(
+            url,
+            headers={"Authorization": f"Bearer {HF_API_TOKEN}", "Content-Type": "application/json"},
+            json={"inputs": text},
+            timeout=30,
+        )
+        if hf_response.status_code == 503:
+            try:
+                wait_hint = hf_response.json().get("estimated_time", 8)
+            except Exception:
+                wait_hint = 8
+            time.sleep(min(float(wait_hint), 20))
+            hf_response = requests.post(
+                url,
+                headers={"Authorization": f"Bearer {HF_API_TOKEN}", "Content-Type": "application/json"},
+                json={"inputs": text},
+                timeout=30,
+            )
+
+        if hf_response.status_code == 200:
+            result = hf_response.json()
+            translation = None
+            if isinstance(result, list) and result and "translation_text" in result[0]:
+                translation = result[0]["translation_text"]
+            if translation:
+                return jsonify({"translation": translation, "is_demo": False})
+
+        # Model unavailable, wrong ID, or unexpected response — be honest, don't guess.
+        return jsonify({
+            "translation": text,
+            "is_demo": True,
+            "reason": f"Translation model unavailable (HTTP {hf_response.status_code})",
+        })
+    except requests.RequestException as e:
+        return jsonify({"translation": text, "is_demo": True, "reason": str(e)})
 
 
 @app.route("/", methods=["GET"])
